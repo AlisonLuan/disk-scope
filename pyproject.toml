@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "build"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "folder-size-tui"
+version = "0.1.0"
+description = "Terminal-based two-pane folder/file size explorer (TUI)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [ {name = "Your Name", email = "you@example.com"} ]
+keywords = ["tui", "curses", "folders", "disk", "sizes"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+]
+
+# Runtime dependencies (keep minimal). windows-curses only on Windows.
+dependencies = [
+    "windows-curses; platform_system == \"Windows\"",
+]
+
+[project.scripts]
+folder-size-tui = "folder_size_tui.app:main"

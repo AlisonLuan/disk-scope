@@ -1,0 +1,6 @@
+# Development dependencies (for contributors)
+ruff
+pytest
+mypy
+build
+twine

@@ -1,0 +1,2 @@
+# Optional runtime dependency for Windows curses
+windows-curses; platform_system == "Windows"
