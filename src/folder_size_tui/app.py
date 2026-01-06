@@ -155,7 +155,7 @@ def msys_to_windows_path(s: str) -> str:
 
 def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
     try:
-        import curses  # type: ignore
+        __import__("curses")
     except Exception:
         print(
             "This interactive arrow-key UI requires 'curses'.\n"
@@ -249,7 +249,7 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
         )
         stdscr.addnstr(
             2, 0,
-            f"Folders (left) are recursive sizes; Files (right) are immediate files in current folder.",
+            "Folders (left) are recursive sizes; Files (right) are immediate files in current folder.",
             w - 1,
         )
         stdscr.addnstr(3, 0, "-" * (w - 1), w - 1)
@@ -388,13 +388,18 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
         win.erase()
         win.border()
         y = 1
-        win.addnstr(y, 2, f"Details: {folder}", win_w - 4); y += 1
-        win.addnstr(y, 2, f"Total (recursive): {human_size(total.bytes_total)} ({total.bytes_total} bytes)", win_w - 4); y += 1
-        win.addnstr(y, 2, f"Counts: {total.dirs} dirs, {total.files} files, {total.errors} errors", win_w - 4); y += 2
+        win.addnstr(y, 2, f"Details: {folder}", win_w - 4)
+        y += 1
+        win.addnstr(y, 2, f"Total (recursive): {human_size(total.bytes_total)} ({total.bytes_total} bytes)", win_w - 4)
+        y += 1
+        win.addnstr(y, 2, f"Counts: {total.dirs} dirs, {total.files} files, {total.errors} errors", win_w - 4)
+        y += 2
 
-        win.addnstr(y, 2, "Top subfolders (recursive size):", win_w - 4); y += 1
+        win.addnstr(y, 2, "Top subfolders (recursive size):", win_w - 4)
+        y += 1
         if not sub_sizes:
-            win.addnstr(y, 4, "(none)", win_w - 6); y += 1
+            win.addnstr(y, 4, "(none)", win_w - 6)
+            y += 1
         else:
             for r in sub_sizes:
                 if y >= win_h - 6:
@@ -404,9 +409,11 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
 
         y += 1
         if y < win_h - 4:
-            win.addnstr(y, 2, f"Top files (immediate, fileErr={ferrs}):", win_w - 4); y += 1
+            win.addnstr(y, 2, f"Top files (immediate, fileErr={ferrs}):", win_w - 4)
+            y += 1
             if not files:
-                win.addnstr(y, 4, "(none)", win_w - 6); y += 1
+                win.addnstr(y, 4, "(none)", win_w - 6)
+                y += 1
             else:
                 for sz, name in files:
                     if y >= win_h - 3:
