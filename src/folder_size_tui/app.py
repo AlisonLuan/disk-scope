@@ -431,19 +431,30 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
         curses.curs_set(0)
         stdscr.keypad(True)
 
+        try:
+            return _curses_main_loop(stdscr)
+        except KeyboardInterrupt:
+            return 0
+
+    def _curses_main_loop(stdscr) -> int:
+        import curses  # type: ignore
+
         # Initial scan
         get_dir_listing(stack[-1], force=True, stdscr=stdscr)
         get_file_listing(stack[-1], force=True, stdscr=stdscr)
 
         while True:
             render(stdscr)
-            ch = stdscr.getch()
+            try:
+                ch = stdscr.getch()
+            except KeyboardInterrupt:
+                return 0
 
             cur = stack[-1]
             listing = get_dir_listing(cur, force=False, stdscr=stdscr)
             sel = selection.get(cur, 0)
 
-            if ch in (ord('q'), ord('Q')):
+            if ch in (ord('q'), ord('Q'), 3):  # q or Ctrl+C
                 return 0
 
             if ch in (curses.KEY_UP,):
@@ -493,6 +504,8 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
 
     try:
         return __import__("curses").wrapper(curses_main)  # type: ignore
+    except KeyboardInterrupt:
+        return 0
     except Exception as e:
         if "Redirection is not supported" in str(e):
             print(
@@ -519,6 +532,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        return 0
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     follow_links = bool(args.follow_links)
     workers = max(1, int(args.workers))

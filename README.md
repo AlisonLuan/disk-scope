@@ -62,7 +62,7 @@ winpty folder-size-tui /c
 - Esc / Backspace / Left / u : go back
 - r : rescan current folder
 - d : details popup for selected folder
-- q : quit
+- q / Ctrl+C : quit
 
 ## Development
 
