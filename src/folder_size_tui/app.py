@@ -8,10 +8,17 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
+
+# Windows directory junctions (e.g. AppData\Local\Application Data -> Local)
+# are reparse points, not POSIX-style symlinks. os.DirEntry.is_symlink() is
+# False for them, so a naive recursive scan loops forever.
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+_IO_REPARSE_TAG_SYMLINK = 0xA000000C
 
 
 # ---------------------------
@@ -39,15 +46,40 @@ def human_size(num_bytes: int) -> str:
     return f"{num_bytes} B"
 
 
+def _dir_identity(path: Path) -> str:
+    """Stable identity for cycle detection (follows junctions on Windows)."""
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return os.path.normcase(os.path.abspath(str(path)))
+
+
+def is_link_like(entry: os.DirEntry, *, follow_links: bool) -> bool:
+    """True for symlinks and Windows junctions that should not be descended into."""
+    if follow_links:
+        return False
+    try:
+        if entry.is_symlink():
+            return True
+        is_junc = getattr(entry, "is_junction", None)
+        if callable(is_junc) and is_junc():
+            return True
+        st = entry.stat(follow_symlinks=False)
+        tag = int(getattr(st, "st_reparse_tag", 0) or 0)
+        return tag in (_IO_REPARSE_TAG_MOUNT_POINT, _IO_REPARSE_TAG_SYMLINK)
+    except OSError:
+        return False
+
+
 def iter_subdirs(base: Path, follow_links: bool) -> List[Path]:
     subdirs: List[Path] = []
     try:
         with os.scandir(base) as it:
             for e in it:
                 try:
-                    if not e.is_dir(follow_symlinks=follow_links):
+                    if is_link_like(e, follow_links=follow_links):
                         continue
-                    if (not follow_links) and e.is_symlink():
+                    if not e.is_dir(follow_symlinks=follow_links):
                         continue
                     subdirs.append(Path(e.path))
                 except OSError:
@@ -57,20 +89,31 @@ def iter_subdirs(base: Path, follow_links: bool) -> List[Path]:
     return subdirs
 
 
-def compute_dir_size(root: Path, follow_links: bool) -> SizeResult:
+def compute_dir_size(
+    root: Path,
+    follow_links: bool,
+    cancel: Optional[threading.Event] = None,
+) -> SizeResult:
     total = 0
     files = 0
     dirs = 0
     errors = 0
 
+    seen: set[str] = set()
     stack = [root]
     while stack:
+        if cancel is not None and cancel.is_set():
+            break
         current = stack.pop()
+        ident = _dir_identity(current)
+        if ident in seen:
+            continue
+        seen.add(ident)
         try:
             with os.scandir(current) as it:
                 for e in it:
                     try:
-                        if (not follow_links) and e.is_symlink():
+                        if is_link_like(e, follow_links=follow_links):
                             continue
 
                         if e.is_dir(follow_symlinks=follow_links):
@@ -90,23 +133,46 @@ def compute_dir_size(root: Path, follow_links: bool) -> SizeResult:
     return SizeResult(path=root, bytes_total=total, files=files, dirs=dirs, errors=errors)
 
 
-def compute_sizes_parallel(paths: Iterable[Path], follow_links: bool, workers: int) -> List[SizeResult]:
+def compute_sizes_parallel(
+    paths: Iterable[Path],
+    follow_links: bool,
+    workers: int,
+    cancel: Optional[threading.Event] = None,
+    on_progress: Optional[Callable[[int, int, Path], None]] = None,
+) -> List[SizeResult]:
     paths_list = list(paths)
     if not paths_list:
         return []
 
     results: List[SizeResult] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        futs = {ex.submit(compute_dir_size, p, follow_links): p for p in paths_list}
-        for fut in as_completed(futs):
-            results.append(fut.result())
+        futs = {ex.submit(compute_dir_size, p, follow_links, cancel): p for p in paths_list}
+        try:
+            done = 0
+            for fut in as_completed(futs):
+                if cancel is not None and cancel.is_set():
+                    break
+                results.append(fut.result())
+                done += 1
+                if on_progress is not None:
+                    on_progress(done, len(paths_list), futs[fut])
+        except KeyboardInterrupt:
+            if cancel is not None:
+                cancel.set()
+            raise
 
     return results
 
 
-def scan_children_dirs(base: Path, follow_links: bool, workers: int) -> List[SizeResult]:
+def scan_children_dirs(
+    base: Path,
+    follow_links: bool,
+    workers: int,
+    cancel: Optional[threading.Event] = None,
+    on_progress: Optional[Callable[[int, int, Path], None]] = None,
+) -> List[SizeResult]:
     subdirs = iter_subdirs(base, follow_links)
-    results = compute_sizes_parallel(subdirs, follow_links, workers)
+    results = compute_sizes_parallel(subdirs, follow_links, workers, cancel=cancel, on_progress=on_progress)
     results.sort(key=lambda r: r.bytes_total, reverse=True)
     return results
 
@@ -172,19 +238,26 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
     selection: Dict[Path, int] = {}
     offset: Dict[Path, int] = {}
     stack: List[Path] = [start_path]
+    cancel = threading.Event()
 
     def show_message(stdscr, msg: str) -> None:
         stdscr.erase()
         h, w = stdscr.getmaxyx()
         stdscr.addnstr(0, 0, msg[: max(0, w - 1)], w - 1)
-        stdscr.addnstr(2, 0, "Please wait...", w - 1)
+        stdscr.addnstr(2, 0, "Please wait...  Ctrl+C to cancel", w - 1)
         stdscr.refresh()
 
     def get_dir_listing(path: Path, force: bool, stdscr) -> List[SizeResult]:
         if (not force) and path in dir_cache:
             return dir_cache[path]
         show_message(stdscr, f"Scanning folder sizes: {path} ...")
-        listing = scan_children_dirs(path, follow_links, workers)
+
+        def on_progress(done: int, total: int, child: Path) -> None:
+            show_message(stdscr, f"Scanning {done}/{total}: {child.name}  ({path})")
+
+        listing = scan_children_dirs(
+            path, follow_links, workers, cancel=cancel, on_progress=on_progress
+        )
         dir_cache[path] = listing
         selection.setdefault(path, 0)
         offset.setdefault(path, 0)
@@ -373,11 +446,11 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
         win.addnstr(2, 2, "Computing...", win_w - 4)
         win.refresh()
 
-        total = compute_dir_size(folder, follow_links)
+        total = compute_dir_size(folder, follow_links, cancel=cancel)
 
         # Largest immediate subfolders
         subdirs = iter_subdirs(folder, follow_links)
-        sub_sizes = compute_sizes_parallel(subdirs, follow_links, workers)
+        sub_sizes = compute_sizes_parallel(subdirs, follow_links, workers, cancel=cancel)
         sub_sizes.sort(key=lambda r: r.bytes_total, reverse=True)
         sub_sizes = sub_sizes[:10]
 
@@ -434,20 +507,26 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
         try:
             return _curses_main_loop(stdscr)
         except KeyboardInterrupt:
+            cancel.set()
             return 0
 
     def _curses_main_loop(stdscr) -> int:
         import curses  # type: ignore
 
         # Initial scan
-        get_dir_listing(stack[-1], force=True, stdscr=stdscr)
-        get_file_listing(stack[-1], force=True, stdscr=stdscr)
+        try:
+            get_dir_listing(stack[-1], force=True, stdscr=stdscr)
+            get_file_listing(stack[-1], force=True, stdscr=stdscr)
+        except KeyboardInterrupt:
+            cancel.set()
+            return 0
 
         while True:
             render(stdscr)
             try:
                 ch = stdscr.getch()
             except KeyboardInterrupt:
+                cancel.set()
                 return 0
 
             cur = stack[-1]
@@ -505,6 +584,7 @@ def run_tui(start_path: Path, follow_links: bool, workers: int) -> int:
     try:
         return __import__("curses").wrapper(curses_main)  # type: ignore
     except KeyboardInterrupt:
+        cancel.set()
         return 0
     except Exception as e:
         if "Redirection is not supported" in str(e):

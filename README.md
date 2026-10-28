@@ -37,7 +37,14 @@ folder-size-tui "C:\\"  # PowerShell
 Flags:
 
 - `--workers`  - number of worker threads for folder scanning (default: 8)
-- `--follow-links` - follow symlinks/junctions
+- `--follow-links` - follow symlinks and Windows directory junctions (off by default)
+
+You can also run the repo shim:
+
+```bash
+python folder_size_explorer.py
+python folder_size_explorer.py C:\Users
+```
 
 You can also run as a module:
 
@@ -47,7 +54,9 @@ python -m folder_size_tui /c
 
 ### Windows notes
 
-- On Windows, the `windows-curses` package is required for the curses-based TUI.
+- On Windows, the `windows-curses` package is required for the curses-based TUI. Python 3.15 has no `windows-curses` wheel yet; use 3.14 (or the project `.venv`) to run the TUI.
+- Junctions such as `AppData\Local\Application Data` are skipped unless you pass `--follow-links`. Following them can recurse forever.
+- Scanning a user profile or drive root can take a long time (especially `AppData`). The UI shows per-folder progress; Ctrl+C cancels the scan.
 - In Git Bash / mintty, curses-based programs may not function correctly. Use Windows Terminal or PowerShell instead.
 - If you're in Git Bash and need to run here, you can use:
 

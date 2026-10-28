@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 - 2026-10-28
+- Skip Windows directory junctions and detect path cycles so scans of a user profile (`AppData`) do not hang
+- Show per-folder scan progress and stop worker threads on Ctrl+C
+
 ## 0.1.2 - 2026-10-28
 - Treat Ctrl+C as a clean quit (no KeyboardInterrupt traceback)
 
