@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.4 - 2026-10-29
+- Bump package version to 0.1.4
+
 ## 0.1.3 - 2026-10-28
 - Skip Windows directory junctions and detect path cycles so scans of a user profile (`AppData`) do not hang
 - Show per-folder scan progress and stop worker threads on Ctrl+C
